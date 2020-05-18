@@ -279,6 +279,8 @@ func (s *Server) Stop() error {
 		s.cond.Wait()
 	}
 	s.mutex.Unlock()
+
+	log.Debug("DHCP: stopped")
 	return nil
 }
 

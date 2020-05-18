@@ -295,26 +295,54 @@ func (s *Server) handleDHCPRemoveStaticLease(w http.ResponseWriter, r *http.Requ
 	}
 }
 
+type resetJSON struct {
+	What string `json:"what"`
+}
+
 func (s *Server) handleReset(w http.ResponseWriter, r *http.Request) {
-	err := s.Stop()
+	req := resetJSON{}
+	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		log.Error("DHCP: Stop: %s", err)
+		httpError(r, w, http.StatusBadRequest, "json.Decode: %s", err)
+		return
 	}
+
+	if req.What == "all" {
+		err = s.Stop()
+		if err != nil {
+			log.Error("DHCP: Stop: %s", err)
+		}
+
+		oldconf := s.conf
+		s.conf = ServerConfig{}
+		s.conf.LeaseDuration = 86400
+		s.conf.ICMPTimeout = 1000
+		s.conf.WorkDir = oldconf.WorkDir
+		s.conf.HTTPRegister = oldconf.HTTPRegister
+		s.conf.ConfigModified = oldconf.ConfigModified
+		s.conf.DBFilePath = oldconf.DBFilePath
+		s.conf.ConfigModified()
+
+	} else if req.What == "leases" {
+		//
+
+	} else {
+		httpError(r, w, http.StatusBadRequest, "unsupported 'what' value")
+		return
+	}
+
+	s.leasesLock.Lock()
+	defer s.leasesLock.Unlock()
+
+	s.leases = nil
+	s.IPpool = make(map[[4]byte]net.HardwareAddr)
 
 	err = os.Remove(s.conf.DBFilePath)
 	if err != nil && !os.IsNotExist(err) {
 		log.Error("DHCP: os.Remove: %s: %s", s.conf.DBFilePath, err)
+	} else if err == nil {
+		log.Debug("DHCP: Deleted leases file")
 	}
-
-	oldconf := s.conf
-	s.conf = ServerConfig{}
-	s.conf.LeaseDuration = 86400
-	s.conf.ICMPTimeout = 1000
-	s.conf.WorkDir = oldconf.WorkDir
-	s.conf.HTTPRegister = oldconf.HTTPRegister
-	s.conf.ConfigModified = oldconf.ConfigModified
-	s.conf.DBFilePath = oldconf.DBFilePath
-	s.conf.ConfigModified()
 }
 
 func (s *Server) registerHandlers() {

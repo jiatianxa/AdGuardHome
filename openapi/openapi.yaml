@@ -447,6 +447,14 @@ paths:
                 - dhcp
             operationId: dhcpReset
             summary: "Reset DHCP configuration"
+            consumes:
+            - application/json
+            parameters:
+            - in: "body"
+              name: "body"
+              required: true
+              schema:
+                $ref: "#/definitions/DhcpResetRequest"
             responses:
                 200:
                     description: OK
@@ -1404,6 +1412,12 @@ definitions:
             hostname:
                 type: "string"
                 example: "dell"
+    DhcpResetRequest:
+        type: "object"
+        description: "DHCP /reset request"
+        properties:
+            what:
+                type: "string"
     DhcpStatus:
         type: "object"
         description: "Built-in DHCP server configuration and status"
