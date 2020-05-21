@@ -379,3 +379,8 @@ export const DNS_REQUEST_OPTIONS = {
     PARALLEL_REQUESTS: 'parallel_requests',
     FASTEST_ADDR: 'fastest_addr',
 };
+
+export const BLOCKED_CLIENT = {
+    IP: 'IP',
+    CIDR: 'CIDR',
+};
