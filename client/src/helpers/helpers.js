@@ -493,12 +493,14 @@ export const formatNumber = (num) => {
 export const normalizeMultiline = (multiline) => `${normalizeTextarea(multiline)
     .map((line) => line.trim())
     .join('\n')}\n`;
+
 /**
  * @param ip {string}
  * @returns {number}
  */
 export const ipToInt = (ip) => ip.split('.')
     .reduce((int, oct) => (int << 8) + parseInt(oct, 10), 0) >>> 0;
+
 /**
  * @param cidr {string}
  * @param ip {string}
@@ -509,6 +511,7 @@ export const isIpInCidr = (cidr, ip) => {
     const mask = ~((2 ** (32 - bits)) - 1);
     return (ipToInt(ip) & mask) === (ipToInt(range) & mask);
 };
+
 /**
  * @param rawClients {string}
  * @param currentClient {string}
