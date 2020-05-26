@@ -12,18 +12,21 @@ const Version = (props) => {
     return (
         <div className="version">
             <div className="version__text">
-                <Trans>version</Trans>:&nbsp;<span className="version__value" title={dnsVersion}>{dnsVersion}</span>
-                <button
-                    type="button"
-                    className="btn btn-icon btn-icon-sm btn-outline-primary btn-sm ml-2"
-                    onClick={() => props.getVersion(true)}
-                    disabled={processingVersion}
-                    title={t('check_updates_now')}
-                >
-                    <svg className="icons">
-                        <use xlinkHref="#refresh" />
-                    </svg>
-                </button>
+                {dnsVersion && <>
+                    <Trans>version</Trans>:&nbsp;
+                    <span className="version__value" title={dnsVersion}>{dnsVersion}</span>
+                    <button
+                        type="button"
+                        className="btn btn-icon btn-icon-sm btn-outline-primary btn-sm ml-2"
+                        onClick={() => props.getVersion(true)}
+                        disabled={processingVersion}
+                        title={t('check_updates_now')}
+                    >
+                        <svg className="icons">
+                            <use xlinkHref="#refresh" />
+                        </svg>
+                    </button>
+                </>}
             </div>
         </div>
     );

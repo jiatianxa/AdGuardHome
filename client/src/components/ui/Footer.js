@@ -10,6 +10,22 @@ import Version from './Version';
 import './Footer.css';
 import './Select.css';
 
+const linksData = [
+    {
+        href: REPOSITORY.URL,
+        name: 'homepage',
+    },
+    {
+        href: PRIVACY_POLICY_LINK,
+        name: 'privacy_policy',
+    },
+    {
+        href: REPOSITORY.ISSUES,
+        className: 'btn btn-outline-primary btn-sm footer__link--report',
+        name: 'report_an_issue',
+    },
+];
+
 class Footer extends Component {
     getYear = () => {
         const today = new Date();
@@ -19,6 +35,24 @@ class Footer extends Component {
     changeLanguage = (event) => {
         i18n.changeLanguage(event.target.value);
     };
+
+    renderCopyright = () => <div className="footer__column">
+        <div className="footer__copyright">
+            <Trans>copyright</Trans> &copy; {this.getYear()}{' '}
+            <a target="_blank" rel="noopener noreferrer" href="https://adguard.com/">AdGuard</a>
+        </div>
+    </div>;
+
+    renderLinks = (linksData) => linksData.map(({ name, href, className = '' }) => <a
+        key={name}
+        href={href}
+        className={`footer__link ${className}`.trim()}
+        target="_blank"
+        rel="noopener noreferrer"
+    >
+        <Trans>{name}</Trans>
+    </a>);
+
 
     render() {
         const {
@@ -30,39 +64,8 @@ class Footer extends Component {
                 <footer className="footer">
                     <div className="container">
                         <div className="footer__row">
-                            {!dnsVersion && (
-                                <div className="footer__column">
-                                    <div className="footer__copyright">
-                                        <Trans>copyright</Trans> &copy; {this.getYear()}{' '}
-                                        <a target="_blank" rel="noopener noreferrer" href="https://adguard.com/">AdGuard</a>
-                                    </div>
-                                </div>
-                            )}
                             <div className="footer__column footer__column--links">
-                                <a
-                                    href={REPOSITORY.URL}
-                                    className="footer__link"
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                >
-                                    <Trans>homepage</Trans>
-                                </a>
-                                <a
-                                    href={PRIVACY_POLICY_LINK}
-                                    className="footer__link"
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                >
-                                    <Trans>privacy_policy</Trans>
-                                </a>
-                                <a
-                                    href={REPOSITORY.ISSUES}
-                                    className="btn btn-outline-primary btn-sm footer__link footer__link--report"
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                >
-                                    <Trans>report_an_issue</Trans>
-                                </a>
+                                {this.renderLinks(linksData)}
                             </div>
                             <div className="footer__column footer__column--language">
                                 <select
@@ -70,37 +73,31 @@ class Footer extends Component {
                                     value={i18n.language}
                                     onChange={this.changeLanguage}
                                 >
-                                    {Object.keys(LANGUAGES).map((lang) => (
-                                        <option key={lang} value={lang}>
-                                            {LANGUAGES[lang]}
-                                        </option>
-                                    ))}
+                                    {Object.keys(LANGUAGES)
+                                        .map((lang) => (
+                                            <option key={lang} value={lang}>
+                                                {LANGUAGES[lang]}
+                                            </option>
+                                        ))}
                                 </select>
                             </div>
                         </div>
                     </div>
                 </footer>
-                {dnsVersion && (
-                    <div className="footer">
-                        <div className="container">
-                            <div className="footer__row">
-                                <div className="footer__column">
-                                    <div className="footer__copyright">
-                                        <Trans>copyright</Trans> &copy; {this.getYear()}{' '}
-                                        <a target="_blank" rel="noopener noreferrer" href="https://adguard.com/">AdGuard</a>
-                                    </div>
-                                </div>
-                                <div className="footer__column footer__column--language">
-                                    <Version
-                                        dnsVersion={dnsVersion}
-                                        processingVersion={processingVersion}
-                                        getVersion={getVersion}
-                                    />
-                                </div>
+                <div className="footer">
+                    <div className="container">
+                        <div className="footer__row">
+                            {this.renderCopyright()}
+                            <div className="footer__column footer__column--language">
+                                <Version
+                                    dnsVersion={dnsVersion}
+                                    processingVersion={processingVersion}
+                                    getVersion={getVersion}
+                                />
                             </div>
                         </div>
                     </div>
-                )}
+                </div>
             </Fragment>
         );
     }
