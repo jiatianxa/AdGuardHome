@@ -524,7 +524,8 @@ export const isClientInIpsOrCidrs = (rawClients, currentClient) => rawClients.sp
         }
         if (curr.includes('/') && isIpInCidr(curr, currentClient)) {
             return BLOCKED_CLIENT.CIDR;
-        } if (curr === currentClient) {
+        }
+        if (curr === currentClient) {
             return BLOCKED_CLIENT.IP;
         }
         return false;
