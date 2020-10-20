@@ -29,13 +29,10 @@ func TestAutoHostsResolution(t *testing.T) {
 	defer func() { _ = os.Remove(f.Name()) }()
 	defer f.Close()
 
-	_, _ = f.WriteString("  127.0.0.1   host  localhost  \n")
-	_, _ = f.WriteString("  ::1   localhost  \n")
+	_, _ = f.WriteString("  127.0.0.1   host  localhost # comment \n")
+	_, _ = f.WriteString("  ::1   localhost#comment  \n")
 
 	ah.Init(f.Name())
-
-	// Update from the hosts file
-	ah.updateHosts()
 
 	// Existing host
 	ips := ah.Process("localhost", dns.TypeA)
@@ -47,12 +44,15 @@ func TestAutoHostsResolution(t *testing.T) {
 	ips = ah.Process("newhost", dns.TypeA)
 	assert.Nil(t, ips)
 
+	// Unknown host (comment)
+	ips = ah.Process("comment", dns.TypeA)
+	assert.Nil(t, ips)
+
 	// Test hosts file
 	table := ah.List()
-	ips, _ = table["host"]
-	assert.NotNil(t, ips)
-	assert.Equal(t, 1, len(ips))
-	assert.Equal(t, "127.0.0.1", ips[0].String())
+	name, ok := table["127.0.0.1"]
+	assert.True(t, ok)
+	assert.Equal(t, "host", name)
 
 	// Test PTR
 	a, _ := dns.ReverseAddr("127.0.0.1")
@@ -76,7 +76,6 @@ func TestAutoHostsFSNotify(t *testing.T) {
 	// Init
 	_, _ = f.WriteString("  127.0.0.1   host  localhost  \n")
 	ah.Init(f.Name())
-	ah.updateHosts()
 
 	// Unknown host
 	ips := ah.Process("newhost", dns.TypeA)
@@ -101,11 +100,13 @@ func TestAutoHostsFSNotify(t *testing.T) {
 }
 
 func TestIP(t *testing.T) {
-	assert.True(t, dnsUnreverseAddr("1.0.0.127.in-addr.arpa").Equal(net.ParseIP("127.0.0.1").To4()))
-	assert.True(t, dnsUnreverseAddr("4.3.2.1.d.c.b.a.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa").Equal(net.ParseIP("::abcd:1234")))
+	assert.Equal(t, "127.0.0.1", DNSUnreverseAddr("1.0.0.127.in-addr.arpa").String())
+	assert.Equal(t, "::abcd:1234", DNSUnreverseAddr("4.3.2.1.d.c.b.a.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa").String())
+	assert.Equal(t, "::abcd:1234", DNSUnreverseAddr("4.3.2.1.d.c.B.A.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa").String())
 
-	assert.True(t, dnsUnreverseAddr("1.0.0.127.in-addr.arpa.") == nil)
-	assert.True(t, dnsUnreverseAddr(".0.0.127.in-addr.arpa") == nil)
-	assert.True(t, dnsUnreverseAddr(".3.2.1.d.c.b.a.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa") == nil)
-	assert.True(t, dnsUnreverseAddr("4.3.2.1.d.c.b.a.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0..ip6.arpa") == nil)
+	assert.Nil(t, DNSUnreverseAddr("1.0.0.127.in-addr.arpa."))
+	assert.Nil(t, DNSUnreverseAddr(".0.0.127.in-addr.arpa"))
+	assert.Nil(t, DNSUnreverseAddr(".3.2.1.d.c.b.a.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa"))
+	assert.Nil(t, DNSUnreverseAddr("4.3.2.1.d.c.b.a.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0..ip6.arpa"))
+	assert.Nil(t, DNSUnreverseAddr("4.3.2.1.d.c.b. .0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa"))
 }

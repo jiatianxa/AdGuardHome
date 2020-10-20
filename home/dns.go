@@ -40,6 +40,7 @@ func initDNSServer() error {
 	}
 	conf := querylog.Config{
 		Enabled:           config.DNS.QueryLogEnabled,
+		FileEnabled:       config.DNS.QueryLogFileEnabled,
 		BaseDir:           baseDir,
 		Interval:          config.DNS.QueryLogInterval,
 		MemSize:           config.DNS.QueryLogMemSize,
@@ -60,7 +61,16 @@ func initDNSServer() error {
 	filterConf.HTTPRegister = httpRegister
 	Context.dnsFilter = dnsfilter.New(&filterConf, nil)
 
-	Context.dnsServer = dnsforward.NewServer(Context.dnsFilter, Context.stats, Context.queryLog)
+	p := dnsforward.DNSCreateParams{
+		DNSFilter: Context.dnsFilter,
+		Stats:     Context.stats,
+		QueryLog:  Context.queryLog,
+	}
+	if Context.dhcpServer != nil {
+		p.DHCPServer = Context.dhcpServer
+	}
+	Context.dnsServer = dnsforward.NewServer(p)
+	Context.clients.dnsServer = Context.dnsServer
 	dnsConfig := generateServerConfig()
 	err = Context.dnsServer.Prepare(&dnsConfig)
 	if err != nil {
@@ -163,10 +173,18 @@ func generateServerConfig() dnsforward.ServerConfig {
 	Context.tls.WriteDiskConfig(&tlsConf)
 	if tlsConf.Enabled {
 		newconfig.TLSConfig = tlsConf.TLSConfig
+
 		if tlsConf.PortDNSOverTLS != 0 {
 			newconfig.TLSListenAddr = &net.TCPAddr{
 				IP:   net.ParseIP(config.DNS.BindHost),
 				Port: tlsConf.PortDNSOverTLS,
+			}
+		}
+
+		if tlsConf.PortDNSOverQUIC != 0 {
+			newconfig.QUICListenAddr = &net.UDPAddr{
+				IP:   net.ParseIP(config.DNS.BindHost),
+				Port: int(tlsConf.PortDNSOverQUIC),
 			}
 		}
 	}
@@ -177,6 +195,44 @@ func generateServerConfig() dnsforward.ServerConfig {
 	newconfig.FilterHandler = applyAdditionalFiltering
 	newconfig.GetCustomUpstreamByClient = Context.clients.FindUpstreams
 	return newconfig
+}
+
+type DNSEncryption struct {
+	https string
+	tls   string
+	quic  string
+}
+
+func getDNSEncryption() DNSEncryption {
+	dnsEncryption := DNSEncryption{}
+
+	tlsConf := tlsConfigSettings{}
+
+	Context.tls.WriteDiskConfig(&tlsConf)
+
+	if tlsConf.Enabled && len(tlsConf.ServerName) != 0 {
+
+		if tlsConf.PortHTTPS != 0 {
+			addr := tlsConf.ServerName
+			if tlsConf.PortHTTPS != 443 {
+				addr = fmt.Sprintf("%s:%d", addr, tlsConf.PortHTTPS)
+			}
+			addr = fmt.Sprintf("https://%s/dns-query", addr)
+			dnsEncryption.https = addr
+		}
+
+		if tlsConf.PortDNSOverTLS != 0 {
+			addr := fmt.Sprintf("tls://%s:%d", tlsConf.ServerName, tlsConf.PortDNSOverTLS)
+			dnsEncryption.tls = addr
+		}
+
+		if tlsConf.PortDNSOverQUIC != 0 {
+			addr := fmt.Sprintf("quic://%s:%d", tlsConf.ServerName, tlsConf.PortDNSOverQUIC)
+			dnsEncryption.quic = addr
+		}
+	}
+
+	return dnsEncryption
 }
 
 // Get the list of DNS addresses the server is listening on
@@ -199,23 +255,15 @@ func getDNSAddresses() []string {
 		addDNSAddress(&dnsAddresses, config.DNS.BindHost)
 	}
 
-	tlsConf := tlsConfigSettings{}
-	Context.tls.WriteDiskConfig(&tlsConf)
-	if tlsConf.Enabled && len(tlsConf.ServerName) != 0 {
-
-		if tlsConf.PortHTTPS != 0 {
-			addr := tlsConf.ServerName
-			if tlsConf.PortHTTPS != 443 {
-				addr = fmt.Sprintf("%s:%d", addr, tlsConf.PortHTTPS)
-			}
-			addr = fmt.Sprintf("https://%s/dns-query", addr)
-			dnsAddresses = append(dnsAddresses, addr)
-		}
-
-		if tlsConf.PortDNSOverTLS != 0 {
-			addr := fmt.Sprintf("tls://%s:%d", tlsConf.ServerName, tlsConf.PortDNSOverTLS)
-			dnsAddresses = append(dnsAddresses, addr)
-		}
+	dnsEncryption := getDNSEncryption()
+	if dnsEncryption.https != "" {
+		dnsAddresses = append(dnsAddresses, dnsEncryption.https)
+	}
+	if dnsEncryption.tls != "" {
+		dnsAddresses = append(dnsAddresses, dnsEncryption.tls)
+	}
+	if dnsEncryption.quic != "" {
+		dnsAddresses = append(dnsAddresses, dnsEncryption.quic)
 	}
 
 	return dnsAddresses
@@ -228,18 +276,20 @@ func applyAdditionalFiltering(clientAddr string, setts *dnsfilter.RequestFilteri
 	if len(clientAddr) == 0 {
 		return
 	}
+	setts.ClientIP = clientAddr
 
 	c, ok := Context.clients.Find(clientAddr)
 	if !ok {
 		return
 	}
 
-	log.Debug("Using settings for client with IP %s", clientAddr)
+	log.Debug("Using settings for client %s with IP %s", c.Name, clientAddr)
 
 	if c.UseOwnBlockedServices {
 		Context.dnsFilter.ApplyBlockedServices(setts, c.BlockedServices, false)
 	}
 
+	setts.ClientName = c.Name
 	setts.ClientTags = c.Tags
 
 	if !c.UseOwnSettings {

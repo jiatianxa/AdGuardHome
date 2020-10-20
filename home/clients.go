@@ -80,12 +80,16 @@ type clientsContainer struct {
 	// dhcpServer is used for looking up clients IP addresses by MAC addresses
 	dhcpServer *dhcpd.Server
 
+	// dnsServer is used for checking clients IP status access list status
+	dnsServer *dnsforward.Server
+
 	autoHosts *util.AutoHosts // get entries from system hosts-files
 
 	testing bool // if TRUE, this object is used for internal tests
 }
 
 // Init initializes clients container
+// dhcpServer: optional
 // Note: this function must be called only once
 func (clients *clientsContainer) Init(objects []clientObject, dhcpServer *dhcpd.Server, autoHosts *util.AutoHosts) {
 	if clients.list != nil {
@@ -106,7 +110,9 @@ func (clients *clientsContainer) Init(objects []clientObject, dhcpServer *dhcpd.
 
 	if !clients.testing {
 		clients.addFromDHCP()
-		clients.dhcpServer.SetOnLeaseChanged(clients.onDHCPLeaseChanged)
+		if clients.dhcpServer != nil {
+			clients.dhcpServer.SetOnLeaseChanged(clients.onDHCPLeaseChanged)
+		}
 		clients.autoHosts.SetOnChanged(clients.onHostsChanged)
 	}
 }
@@ -401,11 +407,9 @@ func (clients *clientsContainer) check(c *Client) error {
 	}
 	sort.Strings(c.Tags)
 
-	if len(c.Upstreams) != 0 {
-		err := dnsforward.ValidateUpstreams(c.Upstreams)
-		if err != nil {
-			return fmt.Errorf("invalid upstream servers: %s", err)
-		}
+	err := dnsforward.ValidateUpstreams(c.Upstreams)
+	if err != nil {
+		return fmt.Errorf("invalid upstream servers: %s", err)
 	}
 
 	return nil
@@ -612,15 +616,13 @@ func (clients *clientsContainer) addFromHostsFile() {
 	_ = clients.rmHosts(ClientSourceHostsFile)
 
 	n := 0
-	for ip, names := range hosts {
-		for _, name := range names {
-			ok, err := clients.addHost(ip, name.String(), ClientSourceHostsFile)
-			if err != nil {
-				log.Debug("Clients: %s", err)
-			}
-			if ok {
-				n++
-			}
+	for ip, name := range hosts {
+		ok, err := clients.addHost(ip, name, ClientSourceHostsFile)
+		if err != nil {
+			log.Debug("Clients: %s", err)
+		}
+		if ok {
+			n++
 		}
 	}
 

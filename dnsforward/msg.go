@@ -24,6 +24,9 @@ func (s *Server) genDNSFilterMessage(d *proxy.DNSContext, result *dnsfilter.Resu
 	m := d.Req
 
 	if m.Question[0].Qtype != dns.TypeA && m.Question[0].Qtype != dns.TypeAAAA {
+		if s.conf.BlockingMode == "null_ip" {
+			return s.makeResponse(m)
+		}
 		return s.genNXDomain(m)
 	}
 
@@ -42,13 +45,7 @@ func (s *Server) genDNSFilterMessage(d *proxy.DNSContext, result *dnsfilter.Resu
 
 		if s.conf.BlockingMode == "null_ip" {
 			// it means that we should return 0.0.0.0 or :: for any blocked request
-
-			switch m.Question[0].Qtype {
-			case dns.TypeA:
-				return s.genARecord(m, []byte{0, 0, 0, 0})
-			case dns.TypeAAAA:
-				return s.genAAAARecord(m, net.IPv6zero)
-			}
+			return s.makeResponseNullIP(m)
 
 		} else if s.conf.BlockingMode == "custom_ip" {
 			// means that we should return custom IP for any blocked request
@@ -64,15 +61,21 @@ func (s *Server) genDNSFilterMessage(d *proxy.DNSContext, result *dnsfilter.Resu
 			// means that we should return NXDOMAIN for any blocked request
 
 			return s.genNXDomain(m)
+
+		} else if s.conf.BlockingMode == "refused" {
+			// means that we should return NXDOMAIN for any blocked request
+
+			return s.makeResponseREFUSED(m)
 		}
 
 		// Default blocking mode
 		// If there's an IP specified in the rule, return it
-		// If there is no IP, return NXDOMAIN
+		// For host-type rules, return null IP
 		if result.IP != nil {
 			return s.genResponseWithIP(m, result.IP)
 		}
-		return s.genNXDomain(m)
+
+		return s.makeResponseNullIP(m)
 	}
 }
 
@@ -133,6 +136,17 @@ func (s *Server) genResponseWithIP(req *dns.Msg, ip net.IP) *dns.Msg {
 	return resp
 }
 
+// Respond with 0.0.0.0 for A, :: for AAAA, empty response for other types
+func (s *Server) makeResponseNullIP(req *dns.Msg) *dns.Msg {
+	if req.Question[0].Qtype == dns.TypeA {
+		return s.genARecord(req, []byte{0, 0, 0, 0})
+	} else if req.Question[0].Qtype == dns.TypeAAAA {
+		return s.genAAAARecord(req, net.IPv6zero)
+	}
+
+	return s.makeResponse(req)
+}
+
 func (s *Server) genBlockedHost(request *dns.Msg, newAddr string, d *proxy.DNSContext) *dns.Msg {
 
 	ip := net.ParseIP(newAddr)
@@ -180,6 +194,14 @@ func (s *Server) genCNAMEAnswer(req *dns.Msg, cname string) *dns.CNAME {
 	}
 	answer.Target = dns.Fqdn(cname)
 	return answer
+}
+
+// Create REFUSED DNS response
+func (s *Server) makeResponseREFUSED(request *dns.Msg) *dns.Msg {
+	resp := dns.Msg{}
+	resp.SetRcode(request, dns.RcodeRefused)
+	resp.RecursionAvailable = true
+	return &resp
 }
 
 func (s *Server) genNXDomain(request *dns.Msg) *dns.Msg {

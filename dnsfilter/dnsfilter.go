@@ -33,8 +33,12 @@ type RequestFilteringSettings struct {
 	SafeSearchEnabled   bool
 	SafeBrowsingEnabled bool
 	ParentalEnabled     bool
-	ClientTags          []string
-	ServicesRules       []ServiceEntry
+
+	ClientName string
+	ClientIP   string
+	ClientTags []string
+
+	ServicesRules []ServiceEntry
 }
 
 // Config allows you to configure DNS filtering with New() or just change variables directly.
@@ -297,7 +301,7 @@ func (d *Dnsfilter) CheckHostRules(host string, qtype uint16, setts *RequestFilt
 		return Result{}, nil
 	}
 
-	return d.matchHost(host, qtype, setts.ClientTags)
+	return d.matchHost(host, qtype, *setts)
 }
 
 // CheckHost tries to match the host against filtering rules,
@@ -312,11 +316,14 @@ func (d *Dnsfilter) CheckHost(host string, qtype uint16, setts *RequestFiltering
 	var result Result
 	var err error
 
-	result = d.processRewrites(host)
+	// first - check rewrites, they have the highest priority
+	result = d.processRewrites(host, qtype)
 	if result.Reason == ReasonRewrite {
 		return result, nil
 	}
 
+	// Now check the hosts file -- do we have any rules for it?
+	// just like DNS rewrites, it has higher priority than filtering rules.
 	if d.Config.AutoHosts != nil {
 		ips := d.Config.AutoHosts.Process(host, qtype)
 		if ips != nil {
@@ -333,9 +340,11 @@ func (d *Dnsfilter) CheckHost(host string, qtype uint16, setts *RequestFiltering
 		}
 	}
 
-	// try filter lists first
+	// Then check the filter lists.
+	// if request is blocked -- it should be blocked.
+	// if it is whitelisted -- we should do nothing with it anymore.
 	if setts.FilteringEnabled {
-		result, err = d.matchHost(host, qtype, setts.ClientTags)
+		result, err = d.matchHost(host, qtype, *setts)
 		if err != nil {
 			return result, err
 		}
@@ -344,6 +353,7 @@ func (d *Dnsfilter) CheckHost(host string, qtype uint16, setts *RequestFiltering
 		}
 	}
 
+	// are there any blocked services?
 	if len(setts.ServicesRules) != 0 {
 		result = matchBlockedServicesRules(host, setts.ServicesRules)
 		if result.Reason.Matched() {
@@ -351,18 +361,7 @@ func (d *Dnsfilter) CheckHost(host string, qtype uint16, setts *RequestFiltering
 		}
 	}
 
-	if setts.SafeSearchEnabled {
-		result, err = d.checkSafeSearch(host)
-		if err != nil {
-			log.Info("SafeSearch: failed: %v", err)
-			return Result{}, nil
-		}
-
-		if result.Reason.Matched() {
-			return result, nil
-		}
-	}
-
+	// browsing security web service
 	if setts.SafeBrowsingEnabled {
 		result, err = d.checkSafeBrowsing(host)
 		if err != nil {
@@ -374,12 +373,26 @@ func (d *Dnsfilter) CheckHost(host string, qtype uint16, setts *RequestFiltering
 		}
 	}
 
+	// parental control web service
 	if setts.ParentalEnabled {
 		result, err = d.checkParental(host)
 		if err != nil {
 			log.Printf("Parental: failed: %v", err)
 			return Result{}, nil
 		}
+		if result.Reason.Matched() {
+			return result, nil
+		}
+	}
+
+	// apply safe search if needed
+	if setts.SafeSearchEnabled {
+		result, err = d.checkSafeSearch(host)
+		if err != nil {
+			log.Info("SafeSearch: failed: %v", err)
+			return Result{}, nil
+		}
+
 		if result.Reason.Matched() {
 			return result, nil
 		}
@@ -394,8 +407,8 @@ func (d *Dnsfilter) CheckHost(host string, qtype uint16, setts *RequestFiltering
 //  . if found, set domain name to canonical name
 //  . repeat for the new domain name (Note: we return only the last CNAME)
 // . Find A or AAAA record for a domain name (exact match or by wildcard)
-//  . if found, return IP addresses (both IPv4 and IPv6)
-func (d *Dnsfilter) processRewrites(host string) Result {
+//  . if found, set IP addresses (IPv4 or IPv6 depending on qtype) in Result.IPList array
+func (d *Dnsfilter) processRewrites(host string, qtype uint16) Result {
 	var res Result
 
 	d.confLock.RLock()
@@ -428,7 +441,14 @@ func (d *Dnsfilter) processRewrites(host string) Result {
 	}
 
 	for _, r := range rr {
-		if r.Type != dns.TypeCNAME {
+		if (r.Type == dns.TypeA && qtype == dns.TypeA) ||
+			(r.Type == dns.TypeAAAA && qtype == dns.TypeAAAA) {
+
+			if r.IP == nil { // IP exception
+				res.Reason = 0
+				return res
+			}
+
 			res.IPList = append(res.IPList, r.IP)
 			log.Debug("Rewrite: A/AAAA for %s is %s", host, r.IP)
 		}
@@ -521,9 +541,6 @@ func createFilteringEngine(filters []Filter) (*filterlist.RuleStorage, *urlfilte
 
 // Initialize urlfilter objects
 func (d *Dnsfilter) initFiltering(allowFilters, blockFilters []Filter) error {
-	d.engineLock.Lock()
-	defer d.engineLock.Unlock()
-	d.reset()
 	rulesStorage, filteringEngine, err := createFilteringEngine(blockFilters)
 	if err != nil {
 		return err
@@ -532,10 +549,14 @@ func (d *Dnsfilter) initFiltering(allowFilters, blockFilters []Filter) error {
 	if err != nil {
 		return err
 	}
+
+	d.engineLock.Lock()
+	d.reset()
 	d.rulesStorage = rulesStorage
 	d.filteringEngine = filteringEngine
 	d.rulesStorageWhite = rulesStorageWhite
 	d.filteringEngineWhite = filteringEngineWhite
+	d.engineLock.Unlock()
 
 	// Make sure that the OS reclaims memory as soon as possible
 	debug.FreeOSMemory()
@@ -545,14 +566,20 @@ func (d *Dnsfilter) initFiltering(allowFilters, blockFilters []Filter) error {
 }
 
 // matchHost is a low-level way to check only if hostname is filtered by rules, skipping expensive safebrowsing and parental lookups
-func (d *Dnsfilter) matchHost(host string, qtype uint16, ctags []string) (Result, error) {
+func (d *Dnsfilter) matchHost(host string, qtype uint16, setts RequestFilteringSettings) (Result, error) {
 	d.engineLock.RLock()
 	// Keep in mind that this lock must be held no just when calling Match()
 	//  but also while using the rules returned by it.
 	defer d.engineLock.RUnlock()
 
+	ureq := urlfilter.DNSRequest{}
+	ureq.Hostname = host
+	ureq.ClientIP = setts.ClientIP
+	ureq.ClientName = setts.ClientName
+	ureq.SortedClientTags = setts.ClientTags
+
 	if d.filteringEngineWhite != nil {
-		rr, ok := d.filteringEngineWhite.Match(host, ctags)
+		rr, ok := d.filteringEngineWhite.MatchRequest(ureq)
 		if ok {
 			var rule rules.Rule
 			if rr.NetworkRule != nil {
@@ -574,7 +601,7 @@ func (d *Dnsfilter) matchHost(host string, qtype uint16, ctags []string) (Result
 		return Result{}, nil
 	}
 
-	rr, ok := d.filteringEngine.Match(host, ctags)
+	rr, ok := d.filteringEngine.MatchRequest(ureq)
 	if !ok {
 		return Result{}, nil
 	}

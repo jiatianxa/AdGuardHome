@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AdguardTeam/AdGuardHome/dhcpd"
 	"github.com/AdguardTeam/AdGuardHome/dnsfilter"
 	"github.com/AdguardTeam/AdGuardHome/querylog"
 	"github.com/AdguardTeam/AdGuardHome/stats"
@@ -30,6 +31,9 @@ var defaultDNS = []string{
 }
 var defaultBootstrap = []string{"9.9.9.10", "149.112.112.10", "2620:fe::10", "2620:fe::fe:10"}
 
+// Often requested by all kinds of DNS probes
+var defaultBlockedHosts = []string{"version.bind", "id.server", "hostname.bind"}
+
 var webRegistered bool
 
 // Server is the main way to start a DNS server.
@@ -43,11 +47,20 @@ var webRegistered bool
 //
 // The zero Server is empty and ready for use.
 type Server struct {
-	dnsProxy  *proxy.Proxy         // DNS proxy instance
-	dnsFilter *dnsfilter.Dnsfilter // DNS filter instance
-	queryLog  querylog.QueryLog    // Query log instance
-	stats     stats.Stats
-	access    *accessCtx
+	dnsProxy   *proxy.Proxy          // DNS proxy instance
+	dnsFilter  *dnsfilter.Dnsfilter  // DNS filter instance
+	dhcpServer dhcpd.ServerInterface // DHCP server instance (optional)
+	queryLog   querylog.QueryLog     // Query log instance
+	stats      stats.Stats
+	access     *accessCtx
+
+	ipset ipsetCtx
+
+	tableHostToIP     map[string]net.IP // "hostname -> IP" table for internal addresses (DHCP)
+	tableHostToIPLock sync.Mutex
+
+	tablePTR     map[string]string // "IP -> hostname" table for reverse lookup
+	tablePTRLock sync.Mutex
 
 	// DNS proxy instance for internal usage
 	// We don't Start() it and so no listen port is required.
@@ -59,13 +72,27 @@ type Server struct {
 	conf ServerConfig
 }
 
+// DNSCreateParams - parameters for NewServer()
+type DNSCreateParams struct {
+	DNSFilter  *dnsfilter.Dnsfilter
+	Stats      stats.Stats
+	QueryLog   querylog.QueryLog
+	DHCPServer dhcpd.ServerInterface
+}
+
 // NewServer creates a new instance of the dnsforward.Server
 // Note: this function must be called only once
-func NewServer(dnsFilter *dnsfilter.Dnsfilter, stats stats.Stats, queryLog querylog.QueryLog) *Server {
+func NewServer(p DNSCreateParams) *Server {
 	s := &Server{}
-	s.dnsFilter = dnsFilter
-	s.stats = stats
-	s.queryLog = queryLog
+	s.dnsFilter = p.DNSFilter
+	s.stats = p.Stats
+	s.queryLog = p.QueryLog
+
+	if p.DHCPServer != nil {
+		s.dhcpServer = p.DHCPServer
+		s.dhcpServer.SetOnLeaseChanged(s.onDHCPLeaseChanged)
+		s.onDHCPLeaseChanged(dhcpd.LeaseChangedAdded)
+	}
 
 	if runtime.GOARCH == "mips" || runtime.GOARCH == "mipsle" {
 		// Use plain DNS on MIPS, encryption is too slow
@@ -146,7 +173,7 @@ func (s *Server) startInternal() error {
 
 // Prepare the object
 func (s *Server) Prepare(config *ServerConfig) error {
-	// 1. Initialize the server configuration
+	// Initialize the server configuration
 	// --
 	if config != nil {
 		s.conf = *config
@@ -157,20 +184,27 @@ func (s *Server) Prepare(config *ServerConfig) error {
 				return fmt.Errorf("DNS: invalid custom blocking IP address specified")
 			}
 		}
+		if s.conf.MaxGoroutines == 0 {
+			s.conf.MaxGoroutines = 50
+		}
 	}
 
-	// 2. Set default values in the case if nothing is configured
+	// Set default values in the case if nothing is configured
 	// --
 	s.initDefaultSettings()
 
-	// 3. Prepare DNS servers settings
+	// Initialize IPSET configuration
+	// --
+	s.ipset.init(s.conf.IPSETList)
+
+	// Prepare DNS servers settings
 	// --
 	err := s.prepareUpstreamSettings()
 	if err != nil {
 		return err
 	}
 
-	// 3. Create DNS proxy configuration
+	// Create DNS proxy configuration
 	// --
 	var proxyConfig proxy.Config
 	proxyConfig, err = s.createProxyConfig()
@@ -178,11 +212,11 @@ func (s *Server) Prepare(config *ServerConfig) error {
 		return err
 	}
 
-	// 4. Prepare a DNS proxy instance that we use for internal DNS queries
+	// Prepare a DNS proxy instance that we use for internal DNS queries
 	// --
 	s.prepareIntlProxy()
 
-	// 5. Initialize DNS access module
+	// Initialize DNS access module
 	// --
 	s.access = &accessCtx{}
 	err = s.access.Init(s.conf.AllowedClients, s.conf.DisallowedClients, s.conf.BlockedHosts)
@@ -190,14 +224,14 @@ func (s *Server) Prepare(config *ServerConfig) error {
 		return err
 	}
 
-	// 6. Register web handlers if necessary
+	// Register web handlers if necessary
 	// --
 	if !webRegistered && s.conf.HTTPRegister != nil {
 		webRegistered = true
 		s.registerHandlers()
 	}
 
-	// 7. Create the main DNS proxy instance
+	// Create the main DNS proxy instance
 	// --
 	s.dnsProxy = &proxy.Proxy{Config: proxyConfig}
 	return nil
@@ -266,4 +300,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if p != nil { // an attempt to protect against race in case we're here after Close() was called
 		p.ServeHTTP(w, r)
 	}
+}
+
+// IsBlockedIP - return TRUE if this client should be blocked
+func (s *Server) IsBlockedIP(ip string) (bool, string) {
+	return s.access.IsBlockedIP(ip)
 }

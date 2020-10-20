@@ -56,6 +56,7 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 
 		"protection_enabled": c.ProtectionEnabled,
 	}
+	data["dhcp_available"] = (Context.dhcpServer != nil)
 
 	jsonVal, err := json.Marshal(data)
 	if err != nil {
@@ -96,8 +97,11 @@ func registerControlHandlers() {
 	httpRegister(http.MethodGet, "/control/i18n/current_language", handleI18nCurrentLanguage)
 	http.HandleFunc("/control/version.json", postInstall(optionalAuth(handleGetVersionJSON)))
 	httpRegister(http.MethodPost, "/control/update", handleUpdate)
+	httpRegister(http.MethodGet, "/control/profile", handleGetProfile)
 
-	httpRegister("GET", "/control/profile", handleGetProfile)
+	// No auth is necessary for DOH/DOT configurations
+	http.HandleFunc("/apple/doh.mobileconfig", postInstall(handleMobileConfigDoh))
+	http.HandleFunc("/apple/dot.mobileconfig", postInstall(handleMobileConfigDot))
 	RegisterAuthHandlers()
 }
 

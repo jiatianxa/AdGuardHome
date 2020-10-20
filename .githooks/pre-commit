@@ -1,0 +1,18 @@
+#!/bin/bash
+set -e;
+
+found=0
+git diff --cached --name-only | grep -q '.js$' && found=1
+if [ $found == 1 ]; then
+    npm --prefix client run lint || exit 1
+    npm run test --prefix client || exit 1
+fi
+
+found=0
+git diff --cached --name-only | grep -q '.go$' && found=1
+if [ $found == 1 ]; then
+	make lint-go || exit 1
+	go test ./... || exit 1
+fi
+
+exit 0;

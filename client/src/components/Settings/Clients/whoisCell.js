@@ -14,7 +14,7 @@ const getFormattedWhois = (value, t) => {
                 <div key={key} title={t(key)}>
                     {icon && (
                         <Fragment>
-                            <svg className="logs__whois-icon text-muted-dark icons">
+                            <svg className="logs__whois-icon text-muted-dark icons icon--24">
                                 <use xlinkHref={`#${icon}`} />
                             </svg>
                             &nbsp;
@@ -32,11 +32,9 @@ const getFormattedWhois = (value, t) => {
 const whoisCell = (t) => function cell(row) {
     const { value } = row;
 
-    return (
-            <div className="logs__row logs__row--overflow">
-                <span className="logs__text logs__text--wrap">{getFormattedWhois(value, t)}</span>
-            </div>
-    );
+    return <div className="logs__row o-hidden">
+        <div className="logs__text logs__text--wrap">{getFormattedWhois(value, t)}</div>
+    </div>;
 };
 
 export default whoisCell;

@@ -1,16 +1,13 @@
 import React, { Fragment } from 'react';
-import { Trans } from 'react-i18next';
 import PropTypes from 'prop-types';
-import {
-    R_IPV4, R_MAC, R_HOST, R_IPV6, R_CIDR, R_CIDR_IPV6,
-    UNSAFE_PORTS, R_URL_REQUIRES_PROTOCOL, R_WIN_ABSOLUTE_PATH, R_UNIX_ABSOLUTE_PATH,
-} from './constants';
+import { Trans } from 'react-i18next';
 import { createOnBlurHandler } from './helpers';
+import { R_UNIX_ABSOLUTE_PATH, R_WIN_ABSOLUTE_PATH } from './constants';
 
 export const renderField = (props, elementType) => {
     const {
-        input, id, className, placeholder, type, disabled, normalizeOnBlur,
-        autoComplete, meta: { touched, error },
+        input, id, className, placeholder, type, disabled, normalizeOnBlur, onScroll,
+        autoComplete, meta: { touched, error }, min, max, step,
     } = props;
 
     const onBlur = (event) => createOnBlurHandler(event, input, normalizeOnBlur);
@@ -23,14 +20,19 @@ export const renderField = (props, elementType) => {
         autoComplete,
         disabled,
         type,
+        min,
+        max,
+        step,
         onBlur,
+        onScroll,
     });
+
     return (
-        <Fragment>
+        <>
             {element}
             {!disabled && touched && error
-            && <span className="form__message form__message--error">{error}</span>}
-        </Fragment>
+            && <span className="form__message form__message--error"><Trans>{error}</Trans></span>}
+        </>
     );
 };
 
@@ -43,9 +45,13 @@ renderField.propTypes = {
     disabled: PropTypes.bool,
     autoComplete: PropTypes.bool,
     normalizeOnBlur: PropTypes.func,
+    min: PropTypes.number,
+    max: PropTypes.number,
+    step: PropTypes.number,
+    onScroll: PropTypes.func,
     meta: PropTypes.shape({
         touched: PropTypes.bool,
-        error: PropTypes.object,
+        error: PropTypes.string,
     }).isRequired,
 };
 
@@ -69,7 +75,7 @@ export const renderGroupField = ({
     const onBlur = (event) => createOnBlurHandler(event, input, normalizeOnBlur);
 
     return (
-        <Fragment>
+        <>
             <div className="input-group">
                 <input
                     {...input}
@@ -85,10 +91,10 @@ export const renderGroupField = ({
                 && <span className="input-group-append">
                         <button
                             type="button"
-                            className="btn btn-secondary btn-icon"
+                            className="btn btn-secondary btn-icon btn-icon--green"
                             onClick={removeField}
                         >
-                            <svg className="icon icon--close">
+                            <svg className="icon icon--24">
                                 <use xlinkHref="#cross" />
                             </svg>
                         </button>
@@ -96,14 +102,14 @@ export const renderGroupField = ({
                 }
             </div>
             {!disabled && touched && error
-            && <span className="form__message form__message--error">{error}</span>}
-        </Fragment>
+            && <span className="form__message form__message--error"><Trans>{error}</Trans></span>}
+        </>
     );
 };
 
 renderGroupField.propTypes = {
     input: PropTypes.object.isRequired,
-    id: PropTypes.string.isRequired,
+    id: PropTypes.string,
     className: PropTypes.string,
     placeholder: PropTypes.string,
     type: PropTypes.string,
@@ -113,7 +119,7 @@ renderGroupField.propTypes = {
     removeField: PropTypes.func,
     meta: PropTypes.shape({
         touched: PropTypes.bool,
-        error: PropTypes.object,
+        error: PropTypes.string,
     }).isRequired,
     normalizeOnBlur: PropTypes.func,
 };
@@ -135,7 +141,8 @@ export const renderRadioField = ({
     </label>
     {!disabled
     && touched
-    && (error && <span className="form__message form__message--error">{error}</span>)}
+    && error
+    && <span className="form__message form__message--error"><Trans>{error}</Trans></span>}
 </Fragment>;
 
 renderRadioField.propTypes = {
@@ -145,11 +152,11 @@ renderRadioField.propTypes = {
     disabled: PropTypes.bool,
     meta: PropTypes.shape({
         touched: PropTypes.bool,
-        error: PropTypes.object,
+        error: PropTypes.string,
     }).isRequired,
 };
 
-export const renderSelectField = ({
+export const CheckboxField = ({
     input,
     placeholder,
     subtitle,
@@ -157,35 +164,61 @@ export const renderSelectField = ({
     onClick,
     modifier = 'checkbox--form',
     meta: { touched, error },
-}) => <Fragment>
+}) => <>
     <label className={`checkbox ${modifier}`} onClick={onClick}>
         <span className="checkbox__marker" />
         <input {...input} type="checkbox" className="checkbox__input" disabled={disabled} />
         <span className="checkbox__label">
-                    <span className="checkbox__label-text checkbox__label-text--long">
-                        <span className="checkbox__label-title">{placeholder}</span>
-                        {subtitle && <span
-                            className="checkbox__label-subtitle"
-                            dangerouslySetInnerHTML={{ __html: subtitle }}
-                        />}
-                    </span>
-                </span>
+            <span className="checkbox__label-text checkbox__label-text--long">
+                <span className="checkbox__label-title">{placeholder}</span>
+                {subtitle && <span className="checkbox__label-subtitle">{subtitle}</span>}
+            </span>
+        </span>
     </label>
     {!disabled
     && touched
-    && (error && <span className="form__message form__message--error">{error}</span>)}
-</Fragment>;
+    && error
+    && <span className="form__message form__message--error"><Trans>{error}</Trans></span>}
+</>;
 
-renderSelectField.propTypes = {
+CheckboxField.propTypes = {
     input: PropTypes.object.isRequired,
     placeholder: PropTypes.string,
-    subtitle: PropTypes.string,
+    subtitle: PropTypes.node,
     disabled: PropTypes.bool,
     onClick: PropTypes.func,
     modifier: PropTypes.string,
+    checked: PropTypes.bool,
     meta: PropTypes.shape({
         touched: PropTypes.bool,
-        error: PropTypes.object,
+        error: PropTypes.string,
+    }).isRequired,
+};
+
+export const renderSelectField = ({
+    input,
+    meta: { touched, error },
+    children,
+    label,
+}) => {
+    const showWarning = touched && error;
+
+    return <>
+        {label && <label><Trans>{label}</Trans></label>}
+        <select {...input} className='form-control custom-select'>{children}</select>
+        {showWarning
+        && <span className="form__message form__message--error form__message--left-pad"><Trans>{error}</Trans></span>}
+    </>;
+};
+
+renderSelectField.propTypes = {
+    input: PropTypes.object.isRequired,
+    disabled: PropTypes.bool,
+    label: PropTypes.string,
+    children: PropTypes.oneOfType([PropTypes.array, PropTypes.element]).isRequired,
+    meta: PropTypes.shape({
+        touched: PropTypes.bool,
+        error: PropTypes.string,
     }).isRequired,
 };
 
@@ -212,7 +245,7 @@ export const renderServiceField = ({
         </svg>
     </label>
     {!disabled && touched && error
-    && <span className="form__message form__message--error">{error}</span>}
+    && <span className="form__message form__message--error"><Trans>{error}</Trans></span>}
 </Fragment>;
 
 renderServiceField.propTypes = {
@@ -223,140 +256,21 @@ renderServiceField.propTypes = {
     icon: PropTypes.string,
     meta: PropTypes.shape({
         touched: PropTypes.bool,
-        error: PropTypes.object,
+        error: PropTypes.string,
     }).isRequired,
 };
 
-// Validation functions
-// If the value is valid, the validation function should return undefined.
-// https://redux-form.com/6.6.3/examples/fieldlevelvalidation/
-export const required = (value) => {
-    const formattedValue = typeof value === 'string' ? value.trim() : value;
-    if (formattedValue || formattedValue === 0 || (formattedValue && formattedValue.length !== 0)) {
-        return undefined;
-    }
-    return <Trans>form_error_required</Trans>;
-};
+export const getLastIpv4Octet = (ipv4) => parseInt(ipv4.slice(ipv4.lastIndexOf('.') + 1), 10);
 
-export const ipv4 = (value) => {
-    if (value && !R_IPV4.test(value)) {
-        return <Trans>form_error_ip4_format</Trans>;
-    }
-    return undefined;
-};
+/**
+ * @param value {string}
+ * @returns {*|number}
+ */
+export const toNumber = (value) => value && parseInt(value, 10);
 
-export const clientId = (value) => {
-    if (!value) {
-        return undefined;
-    }
-    const formattedValue = value ? value.trim() : value;
-    if (formattedValue && !(
-        R_IPV4.test(formattedValue)
-        || R_IPV6.test(formattedValue)
-        || R_MAC.test(formattedValue)
-        || R_CIDR.test(formattedValue)
-        || R_CIDR_IPV6.test(formattedValue)
-    )) {
-        return <Trans>form_error_client_id_format</Trans>;
-    }
-    return undefined;
-};
-
-export const ipv6 = (value) => {
-    if (value && !R_IPV6.test(value)) {
-        return <Trans>form_error_ip6_format</Trans>;
-    }
-    return undefined;
-};
-
-export const ip = (value) => {
-    if (value && !R_IPV4.test(value) && !R_IPV6.test(value)) {
-        return <Trans>form_error_ip_format</Trans>;
-    }
-    return undefined;
-};
-
-export const mac = (value) => {
-    if (value && !R_MAC.test(value)) {
-        return <Trans>form_error_mac_format</Trans>;
-    }
-    return undefined;
-};
-
-export const isPositive = (value) => {
-    if ((value || value === 0) && value <= 0) {
-        return <Trans>form_error_positive</Trans>;
-    }
-    return undefined;
-};
-
-export const biggerOrEqualZero = (value) => {
-    if (value < 0) {
-        return <Trans>form_error_negative</Trans>;
-    }
-    return false;
-};
-
-export const port = (value) => {
-    if ((value || value === 0) && (value < 80 || value > 65535)) {
-        return <Trans>form_error_port_range</Trans>;
-    }
-    return undefined;
-};
-
-export const validInstallPort = (value) => {
-    if (value < 1 || value > 65535) {
-        return <Trans>form_error_port</Trans>;
-    }
-    return undefined;
-};
-
-export const portTLS = (value) => {
-    if (value === 0) {
-        return undefined;
-    }
-    if (value && (value < 80 || value > 65535)) {
-        return <Trans>form_error_port_range</Trans>;
-    }
-    return undefined;
-};
-
-export const isSafePort = (value) => {
-    if (UNSAFE_PORTS.includes(value)) {
-        return <Trans>form_error_port_unsafe</Trans>;
-    }
-    return undefined;
-};
-
-export const domain = (value) => {
-    if (value && !R_HOST.test(value)) {
-        return <Trans>form_error_domain_format</Trans>;
-    }
-    return undefined;
-};
-
-export const answer = (value) => {
-    if (value && (!R_IPV4.test(value) && !R_IPV6.test(value) && !R_HOST.test(value))) {
-        return <Trans>form_error_answer_format</Trans>;
-    }
-    return undefined;
-};
-
-export const isValidUrl = (value) => {
-    if (value && !R_URL_REQUIRES_PROTOCOL.test(value)) {
-        return <Trans>form_error_url_format</Trans>;
-    }
-    return undefined;
-};
-
+/**
+ * @param value {string}
+ * @returns {boolean}
+ */
 export const isValidAbsolutePath = (value) => R_WIN_ABSOLUTE_PATH.test(value)
     || R_UNIX_ABSOLUTE_PATH.test(value);
-
-export const isValidPath = (value) => {
-    if (value && !isValidAbsolutePath(value) && !R_URL_REQUIRES_PROTOCOL.test(value)) {
-        return <Trans>form_error_url_or_path_format</Trans>;
-    }
-    return undefined;
-};
-
-export const toNumber = (value) => value && parseInt(value, 10);

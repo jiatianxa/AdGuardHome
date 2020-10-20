@@ -12,7 +12,8 @@ import (
 
 func (s *Server) beforeRequestHandler(_ *proxy.Proxy, d *proxy.DNSContext) (bool, error) {
 	ip := ipFromAddr(d.Addr)
-	if s.access.IsBlockedIP(ip) {
+	disallowed, _ := s.access.IsBlockedIP(ip)
+	if disallowed {
 		log.Tracef("Client IP %s is blocked by settings", ip)
 		return false, nil
 	}
@@ -51,35 +52,10 @@ func (s *Server) filterDNSRequest(ctx *dnsContext) (*dnsfilter.Result, error) {
 		return nil, errorx.Decorate(err, "dnsfilter failed to check host '%s'", host)
 
 	} else if res.IsFiltered {
-		// log.Tracef("Host %s is filtered, reason - '%s', matched rule: '%s'", host, res.Reason, res.Rule)
+		log.Tracef("Host %s is filtered, reason - '%s', matched rule: '%s'", host, res.Reason, res.Rule)
 		d.Res = s.genDNSFilterMessage(d, &res)
 
-	} else if (res.Reason == dnsfilter.ReasonRewrite || res.Reason == dnsfilter.RewriteEtcHosts) &&
-		len(res.IPList) != 0 {
-		resp := s.makeResponse(req)
-
-		name := host
-		if len(res.CanonName) != 0 {
-			resp.Answer = append(resp.Answer, s.genCNAMEAnswer(req, res.CanonName))
-			name = res.CanonName
-		}
-
-		for _, ip := range res.IPList {
-			ip4 := ip.To4()
-			if req.Question[0].Qtype == dns.TypeA && ip4 != nil {
-				a := s.genAAnswer(req, ip4)
-				a.Hdr.Name = dns.Fqdn(name)
-				resp.Answer = append(resp.Answer, a)
-			} else if req.Question[0].Qtype == dns.TypeAAAA && ip4 == nil {
-				a := s.genAAAAAnswer(req, ip)
-				a.Hdr.Name = dns.Fqdn(name)
-				resp.Answer = append(resp.Answer, a)
-			}
-		}
-
-		d.Res = resp
-
-	} else if res.Reason == dnsfilter.ReasonRewrite && len(res.CanonName) != 0 {
+	} else if res.Reason == dnsfilter.ReasonRewrite && len(res.CanonName) != 0 && len(res.IPList) == 0 {
 		ctx.origQuestion = d.Req.Question[0]
 		// resolve canonical name, not the original host name
 		d.Req.Question[0].Name = dns.Fqdn(res.CanonName)
@@ -96,6 +72,28 @@ func (s *Server) filterDNSRequest(ctx *dnsContext) (*dnsfilter.Result, error) {
 		}
 		ptr.Ptr = res.ReverseHost
 		resp.Answer = append(resp.Answer, ptr)
+		d.Res = resp
+	} else if res.Reason == dnsfilter.ReasonRewrite || res.Reason == dnsfilter.RewriteEtcHosts {
+		resp := s.makeResponse(req)
+
+		name := host
+		if len(res.CanonName) != 0 {
+			resp.Answer = append(resp.Answer, s.genCNAMEAnswer(req, res.CanonName))
+			name = res.CanonName
+		}
+
+		for _, ip := range res.IPList {
+			if req.Question[0].Qtype == dns.TypeA {
+				a := s.genAAnswer(req, ip.To4())
+				a.Hdr.Name = dns.Fqdn(name)
+				resp.Answer = append(resp.Answer, a)
+			} else if req.Question[0].Qtype == dns.TypeAAAA {
+				a := s.genAAAAAnswer(req, ip)
+				a.Hdr.Name = dns.Fqdn(name)
+				resp.Answer = append(resp.Answer, a)
+			}
+		}
+
 		d.Res = resp
 	}
 

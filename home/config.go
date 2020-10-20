@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/AdguardTeam/AdGuardHome/dhcpd"
 	"github.com/AdguardTeam/AdGuardHome/dnsfilter"
@@ -24,8 +23,13 @@ const (
 
 // logSettings
 type logSettings struct {
-	LogFile string `yaml:"log_file"` // Path to the log file. If empty, write to stdout. If "syslog", writes to syslog
-	Verbose bool   `yaml:"verbose"`  // If true, verbose logging is enabled
+	LogCompress   bool   `yaml:"log_compress"`    // Compress determines if the rotated log files should be compressed using gzip (default: false)
+	LogLocalTime  bool   `yaml:"log_localtime"`   // If the time used for formatting the timestamps in is the computer's local time (default: false [UTC])
+	LogMaxBackups int    `yaml:"log_max_backups"` // Maximum number of old log files to retain (MaxAge may still cause them to get deleted)
+	LogMaxSize    int    `yaml:"log_max_size"`    // Maximum size in megabytes of the log file before it gets rotated (default 100 MB)
+	LogMaxAge     int    `yaml:"log_max_age"`     // MaxAge is the maximum number of days to retain old log files
+	LogFile       string `yaml:"log_file"`        // Path to the log file. If empty, write to stdout. If "syslog", writes to syslog
+	Verbose       bool   `yaml:"verbose"`         // If true, verbose logging is enabled
 }
 
 // configuration is loaded from YAML
@@ -34,10 +38,6 @@ type configuration struct {
 	// Raw file data to avoid re-reading of configuration file
 	// It's reset after config is parsed
 	fileData []byte
-
-	// cached version.json to avoid hammering github.io for each page reload
-	versionCheckJSON     []byte
-	versionCheckLastTime time.Time
 
 	BindHost     string `yaml:"bind_host"`     // BindHost is the IP address of the HTTP server to bind to
 	BindPort     int    `yaml:"bind_port"`     // BindPort is the port the HTTP server
@@ -78,10 +78,11 @@ type dnsConfig struct {
 	// time interval for statistics (in days)
 	StatsInterval uint32 `yaml:"statistics_interval"`
 
-	QueryLogEnabled   bool   `yaml:"querylog_enabled"`     // if true, query log is enabled
-	QueryLogInterval  uint32 `yaml:"querylog_interval"`    // time interval for query log (in days)
-	QueryLogMemSize   uint32 `yaml:"querylog_size_memory"` // number of entries kept in memory before they are flushed to disk
-	AnonymizeClientIP bool   `yaml:"anonymize_client_ip"`  // anonymize clients' IP addresses in logs and stats
+	QueryLogEnabled     bool   `yaml:"querylog_enabled"`      // if true, query log is enabled
+	QueryLogFileEnabled bool   `yaml:"querylog_file_enabled"` // if true, query log will be written to a file
+	QueryLogInterval    uint32 `yaml:"querylog_interval"`     // time interval for query log (in days)
+	QueryLogMemSize     uint32 `yaml:"querylog_size_memory"`  // number of entries kept in memory before they are flushed to disk
+	AnonymizeClientIP   bool   `yaml:"anonymize_client_ip"`   // anonymize clients' IP addresses in logs and stats
 
 	dnsforward.FilteringConfig `yaml:",inline"`
 
@@ -91,11 +92,12 @@ type dnsConfig struct {
 }
 
 type tlsConfigSettings struct {
-	Enabled        bool   `yaml:"enabled" json:"enabled"`                               // Enabled is the encryption (DOT/DOH/HTTPS) status
-	ServerName     string `yaml:"server_name" json:"server_name,omitempty"`             // ServerName is the hostname of your HTTPS/TLS server
-	ForceHTTPS     bool   `yaml:"force_https" json:"force_https,omitempty"`             // ForceHTTPS: if true, forces HTTP->HTTPS redirect
-	PortHTTPS      int    `yaml:"port_https" json:"port_https,omitempty"`               // HTTPS port. If 0, HTTPS will be disabled
-	PortDNSOverTLS int    `yaml:"port_dns_over_tls" json:"port_dns_over_tls,omitempty"` // DNS-over-TLS port. If 0, DOT will be disabled
+	Enabled         bool   `yaml:"enabled" json:"enabled"`                                 // Enabled is the encryption (DOT/DOH/HTTPS) status
+	ServerName      string `yaml:"server_name" json:"server_name,omitempty"`               // ServerName is the hostname of your HTTPS/TLS server
+	ForceHTTPS      bool   `yaml:"force_https" json:"force_https,omitempty"`               // ForceHTTPS: if true, forces HTTP->HTTPS redirect
+	PortHTTPS       int    `yaml:"port_https" json:"port_https,omitempty"`                 // HTTPS port. If 0, HTTPS will be disabled
+	PortDNSOverTLS  int    `yaml:"port_dns_over_tls" json:"port_dns_over_tls,omitempty"`   // DNS-over-TLS port. If 0, DOT will be disabled
+	PortDNSOverQUIC uint16 `yaml:"port_dns_over_quic" json:"port_dns_over_quic,omitempty"` // DNS-over-QUIC port. If 0, DoQ will be disabled
 
 	// Allow DOH queries via unencrypted HTTP (e.g. for reverse proxying)
 	AllowUnencryptedDOH bool `yaml:"allow_unencrypted_doh" json:"allow_unencrypted_doh"`
@@ -123,12 +125,16 @@ var config = configuration{
 		FiltersUpdateIntervalHours: 24,
 	},
 	TLS: tlsConfigSettings{
-		PortHTTPS:      443,
-		PortDNSOverTLS: 853, // needs to be passed through to dnsproxy
+		PortHTTPS:       443,
+		PortDNSOverTLS:  853, // needs to be passed through to dnsproxy
+		PortDNSOverQUIC: 784,
 	},
-	DHCP: dhcpd.ServerConfig{
-		LeaseDuration: 86400,
-		ICMPTimeout:   1000,
+	logSettings: logSettings{
+		LogCompress:   false,
+		LogLocalTime:  false,
+		LogMaxBackups: 0,
+		LogMaxSize:    100,
+		LogMaxAge:     3,
 	},
 	SchemaVersion: currentSchemaVersion,
 }
@@ -138,6 +144,7 @@ func initConfig() {
 	config.WebSessionTTLHours = 30 * 24
 
 	config.DNS.QueryLogEnabled = true
+	config.DNS.QueryLogFileEnabled = true
 	config.DNS.QueryLogInterval = 90
 	config.DNS.QueryLogMemSize = 1000
 
@@ -147,6 +154,10 @@ func initConfig() {
 	config.DNS.DnsfilterConf.ParentalCacheSize = 1 * 1024 * 1024
 	config.DNS.DnsfilterConf.CacheTime = 30
 	config.Filters = defaultFilters()
+
+	config.DHCP.Conf4.LeaseDuration = 86400
+	config.DHCP.Conf4.ICMPTimeout = 1000
+	config.DHCP.Conf6.LeaseDuration = 86400
 }
 
 // getConfigFilename returns path to the current config file
@@ -239,9 +250,10 @@ func (c *configuration) write() error {
 	}
 
 	if Context.queryLog != nil {
-		dc := querylog.DiskConfig{}
+		dc := querylog.Config{}
 		Context.queryLog.WriteDiskConfig(&dc)
 		config.DNS.QueryLogEnabled = dc.Enabled
+		config.DNS.QueryLogFileEnabled = dc.FileEnabled
 		config.DNS.QueryLogInterval = dc.Interval
 		config.DNS.QueryLogMemSize = dc.MemSize
 		config.DNS.AnonymizeClientIP = dc.AnonymizeClientIP

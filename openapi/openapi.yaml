@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
     title: AdGuard Home
     description: AdGuard Home REST API. Admin web interface is built on top of this REST API.
-    version: "0.102"
+    version: "0.104"
     contact:
         name: "AdGuard Home"
         url: "https://github.com/AdguardTeam/AdGuardHome"
@@ -35,6 +35,8 @@ tags:
       description: AdGuard Home statistics
     - name: tls
       description: AdGuard Home HTTPS/DOH/DOT settings
+    - name: mobileconfig
+      description: Apple .mobileconfig
 
 paths:
     /status:
@@ -143,36 +145,46 @@ paths:
             tags:
                 - log
             operationId: queryLog
-            summary: Get DNS server query log
+            summary: Get DNS server query log.
             parameters:
                 - name: older_than
                   in: query
                   description: Filter by older than
                   schema:
                       type: string
-                - name: filter_domain
+                - name: offset
                   in: query
-                  description: Filter by domain name
+                  description:
+                    Specify the ranking number of the first item on the page.
+                    Even though it is possible to use "offset" and "older_than",
+                    we recommend choosing one of them and sticking to it.
+                  schema:
+                      type: integer
+                - name: limit
+                  in: query
+                  description: Limit the number of records to be returned
+                  schema:
+                      type: integer
+                - name: search
+                  in: query
+                  description: Filter by domain name or client IP
                   schema:
                       type: string
-                - name: filter_client
-                  in: query
-                  description: Filter by client
-                  schema:
-                      type: string
-                - name: filter_question_type
-                  in: query
-                  description: Filter by question type
-                  schema:
-                      type: string
-                - name: filter_response_status
+                - name: response_status
                   in: query
                   description: Filter by response status
                   schema:
                       type: string
                       enum:
-                          - null
+                          - all
                           - filtered
+                          - blocked
+                          - blocked_safebrowsing
+                          - blocked_parental
+                          - whitelisted
+                          - rewritten
+                          - safe_search
+                          - processed
             responses:
                 "200":
                     description: OK
@@ -338,8 +350,6 @@ paths:
                     application/json:
                         schema:
                             $ref: "#/components/schemas/DhcpConfig"
-                description: DHCP configuration JSON
-                required: true
             responses:
                 "200":
                     description: OK
@@ -907,6 +917,27 @@ paths:
                         application/json:
                             schema:
                                 $ref: "#/components/schemas/ProfileInfo"
+    /apple/doh.mobileconfig:
+        get:
+            tags:
+                - mobileconfig
+                - global
+            operationId: mobileConfigDoH
+            summary: Get DNS over HTTPS .mobileconfig
+            responses:
+                "200":
+                    description: DNS over HTTPS plist file
+
+    /apple/dot.mobileconfig:
+        get:
+            tags:
+                - mobileconfig
+                - global
+            operationId: mobileConfigDoT
+            summary: Get TLS over TLS .mobileconfig
+            responses:
+                "200":
+                    description: DNS over TLS plist file
 
 components:
     requestBodies:
@@ -955,6 +986,8 @@ components:
                     maximum: 65535
                 protection_enabled:
                     type: boolean
+                dhcp_available:
+                    type: boolean
                 querylog_enabled:
                     type: boolean
                 running:
@@ -987,7 +1020,11 @@ components:
                     example:
                         - tls://1.1.1.1
                         - tls://1.0.0.1
+                upstream_dns_file:
+                    type: string
                 protection_enabled:
+                    type: boolean
+                dhcp_available:
                     type: boolean
                 ratelimit:
                     type: integer
@@ -995,6 +1032,7 @@ components:
                     type: string
                     enum:
                         - default
+                        - refused
                         - nxdomain
                         - null_ip
                         - custom_ip
@@ -1006,12 +1044,17 @@ components:
                     type: boolean
                 dnssec_enabled:
                     type: boolean
-                fastest_addr:
-                    type: boolean
-                parallel_requests:
-                    type: boolean
-                    description: If true, parallel queries to all configured upstream servers are
-                        enabled
+                cache_size:
+                    type: integer
+                cache_ttl_min:
+                    type: integer
+                cache_ttl_max:
+                    type: integer
+                upstream_mode:
+                    enum:
+                        - ""
+                        - parallel
+                        - fastest_addr
         UpstreamsConfig:
             type: object
             description: Upstreams configuration
@@ -1204,15 +1247,15 @@ components:
                 top_queried_domains:
                     type: array
                     items:
-                        type: object
+                        $ref: "#/components/schemas/TopArrayEntry"
                 top_clients:
                     type: array
                     items:
-                        type: object
+                        $ref: "#/components/schemas/TopArrayEntry"
                 top_blocked_domains:
                     type: array
                     items:
-                        type: object
+                        $ref: "#/components/schemas/TopArrayEntry"
                 dns_queries:
                     type: array
                     items:
@@ -1229,6 +1272,12 @@ components:
                     type: array
                     items:
                         type: integer
+        TopArrayEntry:
+            type: object
+            description: Represent the number of hits per key (domain or client IP)
+            properties:
+                domain_or_ip:
+                    type: integer
         StatsConfig:
             type: object
             description: Statistics configuration
@@ -1238,17 +1287,18 @@ components:
                     description: Time period to keep data (1 | 7 | 30 | 90)
         DhcpConfig:
             type: object
-            description: Built-in DHCP server configuration
-            required:
-                - enabled
-                - gateway_ip
-                - subnet_mask
-                - range_start
-                - range_end
-                - lease_duration
             properties:
                 enabled:
                     type: boolean
+                interface_name:
+                    type: string
+                v4:
+                    $ref: "#/components/schemas/DhcpConfigV4"
+                v6:
+                    $ref: "#/components/schemas/DhcpConfigV6"
+        DhcpConfigV4:
+            type: object
+            properties:
                 gateway_ip:
                     type: string
                     example: 192.168.1.1
@@ -1262,8 +1312,14 @@ components:
                     type: string
                     example: 192.168.10.50
                 lease_duration:
+                    type: integer
+        DhcpConfigV6:
+            type: object
+            properties:
+                range_start:
                     type: string
-                    example: 12h
+                lease_duration:
+                    type: integer
         DhcpLease:
             type: object
             description: DHCP lease information
@@ -1284,8 +1340,7 @@ components:
                     example: dell
                 expires:
                     type: string
-                    format: date-time
-                    example: 2017-07-21T17:32:28Z
+                    example: "2017-07-21T17:32:28Z"
         DhcpStaticLease:
             type: object
             description: DHCP static lease information
@@ -1311,8 +1366,14 @@ components:
                 - config
                 - leases
             properties:
-                config:
-                    $ref: "#/components/schemas/DhcpConfig"
+                enabled:
+                    type: boolean
+                interface_name:
+                    type: string
+                v4:
+                    $ref: "#/components/schemas/DhcpConfigV4"
+                v6:
+                    $ref: "#/components/schemas/DhcpConfigV6"
                 leases:
                     type: array
                     items:
@@ -1321,14 +1382,30 @@ components:
                     type: array
                     items:
                         $ref: "#/components/schemas/DhcpStaticLease"
+
         DhcpSearchResult:
             type: object
             description: Information about a DHCP server discovered in the current network
+            properties:
+                v4:
+                    $ref: "#/components/schemas/DhcpSearchV4"
+                v6:
+                    $ref: "#/components/schemas/DhcpSearchV6"
+
+        DhcpSearchV4:
+            type: object
             properties:
                 other_server:
                     $ref: "#/components/schemas/DhcpSearchResultOtherServer"
                 static_ip:
                     $ref: "#/components/schemas/DhcpSearchResultStaticIP"
+
+        DhcpSearchV6:
+            type: object
+            properties:
+                other_server:
+                    $ref: "#/components/schemas/DhcpSearchResultOtherServer"
+
         DhcpSearchResultOtherServer:
             type: object
             properties:
@@ -1340,6 +1417,7 @@ components:
                     type: string
                     description: Set if found=error
                     example: ""
+
         DhcpSearchResultStaticIP:
             type: object
             properties:
@@ -1351,6 +1429,7 @@ components:
                     type: string
                     description: Set if static=no
                     example: ""
+
         DnsAnswer:
             type: object
             description: DNS answer section
@@ -1408,11 +1487,19 @@ components:
                     description: Answer from upstream server (optional)
                     items:
                         $ref: "#/components/schemas/DnsAnswer"
+                upstream:
+                    type: string
+                    description: Upstream URL starting with tcp://, tls://, https://, or with an IP address
                 answer_dnssec:
                     type: boolean
                 client:
                     type: string
                     example: 192.168.0.1
+                client_proto:
+                    enum:
+                        - dot
+                        - doh
+                        - ""
                 elapsedMs:
                     type: string
                     example: "54.023928"
@@ -1502,6 +1589,11 @@ components:
                     format: int32
                     example: 853
                     description: DNS-over-TLS port. If 0, DOT will be disabled.
+                port_dns_over_quic:
+                    type: integer
+                    format: int32
+                    example: 784
+                    description: DNS-over-QUIC port. If 0, DOQ will be disabled.
                 certificate_chain:
                     type: string
                     description: Base64 string with PEM-encoded certificates chain
@@ -1576,19 +1668,19 @@ components:
                 hardware_address:
                     type: string
                     example: 52:54:00:11:09:ba
-                mtu:
-                    type: integer
-                    format: int32
-                    example: 1500
                 name:
                     type: string
                     example: eth0
-                ip_addresses:
+                ipv4_addresses:
                     type: array
                     items:
                         type: string
-                    example:
-                        - 127.0.0.1
+                ipv6_addresses:
+                    type: array
+                    items:
+                        type: string
+                gateway_ip:
+                    type: string
         AddressInfo:
             type: object
             description: Port information
@@ -1696,7 +1788,61 @@ components:
             properties:
                 1.2.3.4:
                     items:
-                        $ref: "#/components/schemas/Client"
+                        $ref: "#/components/schemas/ClientFindSubEntry"
+
+        ClientFindSubEntry:
+            type: object
+            properties:
+                name:
+                    type: string
+                    description: Name
+                    example: localhost
+                ids:
+                    type: array
+                    description: IP, CIDR or MAC address
+                    items:
+                        type: string
+                use_global_settings:
+                    type: boolean
+                filtering_enabled:
+                    type: boolean
+                parental_enabled:
+                    type: boolean
+                safebrowsing_enabled:
+                    type: boolean
+                safesearch_enabled:
+                    type: boolean
+                use_global_blocked_services:
+                    type: boolean
+                blocked_services:
+                    type: array
+                    items:
+                        type: string
+                upstreams:
+                    type: array
+                    items:
+                        type: string
+                whois_info:
+                    type: array
+                    items:
+                        $ref: "#/components/schemas/WhoisInfo"
+                disallowed:
+                    type: boolean
+                    description: >
+                        Whether the client's IP is blocked or not.
+                disallowed_rule:
+                    type: string
+                    description: >
+                        The rule due to which the client is disallowed.
+                        If `disallowed` is `true`, and this string is empty - it means that
+                        the client IP is disallowed by the "allowed IP list", i.e. it is not included in allowed list.
+
+        WhoisInfo:
+            type: object
+            properties:
+                key:
+                    type: string
+
         Clients:
             type: object
             properties:
